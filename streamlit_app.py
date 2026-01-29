@@ -1,151 +1,217 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
+import plotly.express as px
+import plotly.graph_objects as go
 
-# Set the title and favicon that appear in the Browser's tab bar.
+# -----------------------------
+# Page setup
+# -----------------------------
 st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
+    page_title="Global Migration Dashboard",
+    layout="wide"
 )
 
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
+st.title("Global Migration Flows")
 
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
+# -----------------------------
+# Dataset description + question
+# -----------------------------
+st.markdown(
     """
+### Dataset description
+This dataset contains international migration stock data for the year 2020.  
+Each row represents the number of people born in one country (**Origin**) who are living in another country (**Destination**).
 
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
+**Source:** United Nations International Migrant Stock dataset (cleaned and reformatted for this project).
 
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
+### Question
+For a selected origin country:
+- Which destination countries host the largest migrant populations?
+- Is migration concentrated in a few destinations or spread across many countries?
+"""
 )
 
-''
-''
+# -----------------------------
+# Load and clean data
+# -----------------------------
+@st.cache_data
+def load_data():
+    df = pd.read_csv("data/migration_2020_clean.csv")
 
+    df["Origin"] = df["Origin"].astype(str).str.strip()
+    df["Destination"] = df["Destination"].astype(str).str.strip()
+    df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+    df = df.dropna(subset=["Origin", "Destination", "Value"])
+    df = df[df["Value"] >= 0]
 
-st.header(f'GDP in {to_year}', divider='gray')
+    return df
 
-''
+df = load_data()
 
-cols = st.columns(4)
+with st.expander("Preview of the data"):
+    st.dataframe(df.head(15), width="stretch")
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+# -----------------------------
+# Sidebar controls (interaction)
+# -----------------------------
+st.sidebar.header("Filters")
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+origin_countries = sorted(df["Origin"].unique())
+selected_origin = st.sidebar.selectbox(
+    "Select origin country",
+    origin_countries,
+    index=origin_countries.index("Eritrea") if "Eritrea" in origin_countries else 0
+)
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+top_n = st.sidebar.slider(
+    "Number of top destinations",
+    min_value=5,
+    max_value=25,
+    value=10
+)
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
+filtered_df = df[df["Origin"] == selected_origin].copy()
+
+if filtered_df.empty:
+    st.error("No data available for the selected origin.")
+    st.stop()
+
+# -----------------------------
+# Summary metrics
+# -----------------------------
+total_abroad = int(filtered_df["Value"].sum())
+num_destinations = filtered_df["Destination"].nunique()
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Origin country", selected_origin)
+c2.metric("Total migrants abroad", f"{total_abroad:,}")
+c3.metric("Destination countries", num_destinations)
+
+st.divider()
+
+# -----------------------------
+# Visualization 1: World map
+# -----------------------------
+st.subheader("Map: Global distribution of migrants")
+
+fig_map = px.choropleth(
+    filtered_df,
+    locations="Destination",
+    locationmode="country names",
+    color="Value",
+    hover_name="Destination",
+    hover_data={"Value": ":,0f"},
+    color_continuous_scale="Viridis"
+)
+
+fig_map.update_layout(
+    title=f"Migrants from {selected_origin} by destination",
+    height=520,
+    margin=dict(l=0, r=0, t=60, b=0),
+    coloraxis_colorbar=dict(title="People")
+)
+
+st.plotly_chart(fig_map, width="stretch")
+
+# -----------------------------
+# Visualization 2: Ranked destinations (light + animated)
+# -----------------------------
+st.subheader("Ranking: Top destination countries")
+
+top_destinations = (
+    filtered_df.sort_values("Value", ascending=False)
+    .head(top_n)
+    .sort_values("Value", ascending=True)
+)
+
+fig_bar = px.bar(
+    top_destinations,
+    x="Value",
+    y="Destination",
+    orientation="h",
+    text="Value",
+    color="Value",
+    color_continuous_scale=px.colors.sequential.Tealgrn,
+    labels={
+        "Value": "Number of people",
+        "Destination": "Destination country"
+    }
+)
+
+fig_bar.update_traces(
+    texttemplate="%{text:,}",
+    textposition="outside"
+)
+
+fig_bar.update_layout(
+    title=f"Top {top_n} destinations for migrants from {selected_origin}",
+    height=520,
+    margin=dict(l=160, r=30, t=60, b=40),
+    xaxis_title="Number of people",
+    yaxis_title="",
+    transition_duration=700,
+    coloraxis_showscale=False,
+    plot_bgcolor="rgba(0,0,0,0)",
+    paper_bgcolor="rgba(0,0,0,0)"
+)
+
+st.plotly_chart(fig_bar, width="stretch")
+
+# -----------------------------
+# Visualization 3: Sankey flow (movement-focused)
+# -----------------------------
+st.subheader("Flow view: Origin → destinations")
+
+top_flows = (
+    filtered_df.sort_values("Value", ascending=False)
+    .head(top_n)
+)
+
+labels = [selected_origin] + top_flows["Destination"].tolist()
+source = [0] * len(top_flows)
+target = list(range(1, len(top_flows) + 1))
+values = top_flows["Value"].astype(int).tolist()
+
+fig_sankey = go.Figure(
+    data=[
+        go.Sankey(
+            arrangement="snap",
+            node=dict(
+                label=labels,
+                pad=20,
+                thickness=18,
+                color=["#B8E1DD"] + ["#E6C7E8"] * len(top_flows)
+            ),
+            link=dict(
+                source=source,
+                target=target,
+                value=values,
+                color="rgba(150,200,220,0.45)"
+            )
         )
+    ]
+)
+
+fig_sankey.update_layout(
+    title=f"Migration flow from {selected_origin} to top {top_n} destinations",
+    height=520,
+    margin=dict(l=20, r=20, t=60, b=20),
+    paper_bgcolor="rgba(0,0,0,0)"
+)
+
+st.plotly_chart(fig_sankey, width="stretch")
+
+# -----------------------------
+# Interpretation
+# -----------------------------
+st.markdown(
+    """
+### Interpretation
+- Most migrants from the selected country go to only a few destinations, not everywhere.
+- This means migration is concentrated in certain countries.
+- The map shows where migrants are located in the world.
+- The flow diagram helps show migration as movement from one country to many others.
+"""
+)
+
