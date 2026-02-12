@@ -1,217 +1,184 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 
-# -----------------------------
-# Page setup
-# -----------------------------
-st.set_page_config(
-    page_title="Global Migration Dashboard",
-    layout="wide"
+# --------------------------------------------------
+# PAGE CONFIG
+# --------------------------------------------------
+st.set_page_config(layout="wide")
+
+# Dark cinematic style
+st.markdown("""
+<style>
+html, body, [class*="css"]  {
+    background-color: #000000;
+    color: #ffffff;
+}
+.big-title {
+    font-size: 64px;
+    font-weight: 800;
+    text-align: center;
+    margin-top: 80px;
+}
+.subtitle {
+    font-size: 26px;
+    text-align: center;
+    opacity: 0.8;
+}
+.section {
+    margin-top: 120px;
+}
+.center {
+    text-align: center;
+    font-size: 24px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# --------------------------------------------------
+# INTRO
+# --------------------------------------------------
+st.markdown("<div class='big-title'>The Eritrean Journey</div>", unsafe_allow_html=True)
+st.markdown("<div class='subtitle'>This is not migration. This is survival.</div>", unsafe_allow_html=True)
+
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
+
+# --------------------------------------------------
+# SECTION 1 – SAWA
+# --------------------------------------------------
+st.markdown("<div class='center'>Where It Begins</div>", unsafe_allow_html=True)
+
+col1, col2 = st.columns([1,2])
+
+with col1:
+    st.image("sawa-eritrea-4.jpg", width=350)
+
+with col2:
+    st.markdown("""
+National service has no defined end.  
+For many young Eritreans, the future becomes uncertain.  
+Leaving becomes the only option.
+""")
+
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
+
+# --------------------------------------------------
+# SECTION 2 – JOURNEY
+# --------------------------------------------------
+st.markdown("<div class='center'>The Journey Through Libya</div>", unsafe_allow_html=True)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.image("libya-migrants.jpg", width=350)
+
+with col2:
+    st.image("boat.jpg", width=350)
+
+st.markdown("""
+The path moves through Sudan.  
+Through Libya.  
+Onto unstable boats.  
+Across the Mediterranean Sea.
+""")
+
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
+
+# --------------------------------------------------
+# LOAD DATA
+# --------------------------------------------------
+refugees = pd.read_csv("data/eritrean_refugees_full.csv")
+deaths = pd.read_csv("data/mediterranean_deaths_full.csv")
+lampedusa = pd.read_csv("data/lampedusa_2013_event.csv")
+
+# --------------------------------------------------
+# SECTION 3 – INTERACTIVE DATA
+# --------------------------------------------------
+st.markdown("<div class='center'>The Numbers</div>", unsafe_allow_html=True)
+
+years = sorted(refugees["Year"].unique())
+
+# SAFE slider (no crash)
+year = st.select_slider(
+    "Select Year",
+    options=years,
+    value=years[len(years)//2]
 )
 
-st.title("Global Migration Flows")
+refugees_year = refugees[refugees["Year"] == year]
+deaths_year = deaths[deaths["Year"] == year]
 
-# -----------------------------
-# Dataset description + question
-# -----------------------------
-st.markdown(
-    """
-### Dataset description
-This dataset contains international migration stock data for the year 2020.  
-Each row represents the number of people born in one country (**Origin**) who are living in another country (**Destination**).
+total_refugees = int(refugees_year["Refugees"].sum())
+total_deaths = int(deaths_year["Deaths_Mediterranean"].sum())
 
-**Source:** United Nations International Migrant Stock dataset (cleaned and reformatted for this project).
+col1, col2 = st.columns(2)
+col1.metric("Eritreans Living Abroad", f"{total_refugees:,}")
+col2.metric("Mediterranean Deaths", f"{total_deaths:,}")
 
-### Question
-For a selected origin country:
-- Which destination countries host the largest migrant populations?
-- Is migration concentrated in a few destinations or spread across many countries?
-"""
-)
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
 
-# -----------------------------
-# Load and clean data
-# -----------------------------
-@st.cache_data
-def load_data():
-    df = pd.read_csv("data/migration_2020_clean.csv")
-
-    df["Origin"] = df["Origin"].astype(str).str.strip()
-    df["Destination"] = df["Destination"].astype(str).str.strip()
-    df["Value"] = pd.to_numeric(df["Value"], errors="coerce")
-
-    df = df.dropna(subset=["Origin", "Destination", "Value"])
-    df = df[df["Value"] >= 0]
-
-    return df
-
-df = load_data()
-
-with st.expander("Preview of the data"):
-    st.dataframe(df.head(15), width="stretch")
-
-# -----------------------------
-# Sidebar controls (interaction)
-# -----------------------------
-st.sidebar.header("Filters")
-
-origin_countries = sorted(df["Origin"].unique())
-selected_origin = st.sidebar.selectbox(
-    "Select origin country",
-    origin_countries,
-    index=origin_countries.index("Eritrea") if "Eritrea" in origin_countries else 0
-)
-
-top_n = st.sidebar.slider(
-    "Number of top destinations",
-    min_value=5,
-    max_value=25,
-    value=10
-)
-
-filtered_df = df[df["Origin"] == selected_origin].copy()
-
-if filtered_df.empty:
-    st.error("No data available for the selected origin.")
-    st.stop()
-
-# -----------------------------
-# Summary metrics
-# -----------------------------
-total_abroad = int(filtered_df["Value"].sum())
-num_destinations = filtered_df["Destination"].nunique()
-
-c1, c2, c3 = st.columns(3)
-c1.metric("Origin country", selected_origin)
-c2.metric("Total migrants abroad", f"{total_abroad:,}")
-c3.metric("Destination countries", num_destinations)
-
-st.divider()
-
-# -----------------------------
-# Visualization 1: World map
-# -----------------------------
-st.subheader("Map: Global distribution of migrants")
+# --------------------------------------------------
+# GLOBAL DISTRIBUTION MAP
+# --------------------------------------------------
+st.markdown("<div class='center'>Global Distribution</div>", unsafe_allow_html=True)
 
 fig_map = px.choropleth(
-    filtered_df,
-    locations="Destination",
+    refugees_year,
+    locations="Country_of_Asylum",
     locationmode="country names",
-    color="Value",
-    hover_name="Destination",
-    hover_data={"Value": ":,0f"},
-    color_continuous_scale="Viridis"
+    color="Refugees",
+    color_continuous_scale="Reds"
 )
 
 fig_map.update_layout(
-    title=f"Migrants from {selected_origin} by destination",
-    height=520,
-    margin=dict(l=0, r=0, t=60, b=0),
-    coloraxis_colorbar=dict(title="People")
+    paper_bgcolor="black",
+    plot_bgcolor="black",
+    font_color="white",
+    height=600
 )
 
 st.plotly_chart(fig_map, width="stretch")
 
-# -----------------------------
-# Visualization 2: Ranked destinations (light + animated)
-# -----------------------------
-st.subheader("Ranking: Top destination countries")
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
 
-top_destinations = (
-    filtered_df.sort_values("Value", ascending=False)
-    .head(top_n)
-    .sort_values("Value", ascending=True)
+# --------------------------------------------------
+# DEATH TIMELINE
+# --------------------------------------------------
+st.markdown("<div class='center'>Mediterranean Deaths Over Time</div>", unsafe_allow_html=True)
+
+fig_line = px.line(
+    deaths,
+    x="Year",
+    y="Deaths_Mediterranean",
+    markers=True
 )
 
-fig_bar = px.bar(
-    top_destinations,
-    x="Value",
-    y="Destination",
-    orientation="h",
-    text="Value",
-    color="Value",
-    color_continuous_scale=px.colors.sequential.Tealgrn,
-    labels={
-        "Value": "Number of people",
-        "Destination": "Destination country"
-    }
+fig_line.update_layout(
+    paper_bgcolor="black",
+    plot_bgcolor="black",
+    font_color="white",
+    height=600
 )
 
-fig_bar.update_traces(
-    texttemplate="%{text:,}",
-    textposition="outside"
-)
+st.plotly_chart(fig_line, width="stretch")
 
-fig_bar.update_layout(
-    title=f"Top {top_n} destinations for migrants from {selected_origin}",
-    height=520,
-    margin=dict(l=160, r=30, t=60, b=40),
-    xaxis_title="Number of people",
-    yaxis_title="",
-    transition_duration=700,
-    coloraxis_showscale=False,
-    plot_bgcolor="rgba(0,0,0,0)",
-    paper_bgcolor="rgba(0,0,0,0)"
-)
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
 
-st.plotly_chart(fig_bar, width="stretch")
+# --------------------------------------------------
+# LAMPEDUSA EVENT
+# --------------------------------------------------
+st.markdown("<div class='center'>October 3, 2013 — Lampedusa</div>", unsafe_allow_html=True)
 
-# -----------------------------
-# Visualization 3: Sankey flow (movement-focused)
-# -----------------------------
-st.subheader("Flow view: Origin → destinations")
+st.markdown("""
+A boat carrying mostly Eritrean migrants sank near Italy.  
+More than 360 people died.
+""")
 
-top_flows = (
-    filtered_df.sort_values("Value", ascending=False)
-    .head(top_n)
-)
+st.dataframe(lampedusa)
 
-labels = [selected_origin] + top_flows["Destination"].tolist()
-source = [0] * len(top_flows)
-target = list(range(1, len(top_flows) + 1))
-values = top_flows["Value"].astype(int).tolist()
+st.markdown("<div class='section'></div>", unsafe_allow_html=True)
 
-fig_sankey = go.Figure(
-    data=[
-        go.Sankey(
-            arrangement="snap",
-            node=dict(
-                label=labels,
-                pad=20,
-                thickness=18,
-                color=["#B8E1DD"] + ["#E6C7E8"] * len(top_flows)
-            ),
-            link=dict(
-                source=source,
-                target=target,
-                value=values,
-                color="rgba(150,200,220,0.45)"
-            )
-        )
-    ]
-)
-
-fig_sankey.update_layout(
-    title=f"Migration flow from {selected_origin} to top {top_n} destinations",
-    height=520,
-    margin=dict(l=20, r=20, t=60, b=20),
-    paper_bgcolor="rgba(0,0,0,0)"
-)
-
-st.plotly_chart(fig_sankey, width="stretch")
-
-# -----------------------------
-# Interpretation
-# -----------------------------
-st.markdown(
-    """
-### Interpretation
-- Most migrants from the selected country go to only a few destinations, not everywhere.
-- This means migration is concentrated in certain countries.
-- The map shows where migrants are located in the world.
-- The flow diagram helps show migration as movement from one country to many others.
-"""
-)
-
+st.markdown("""
+Behind every spike is a life.  
+Behind every bar is a family.
+""")
