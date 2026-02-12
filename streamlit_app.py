@@ -180,5 +180,5 @@ st.markdown("<div class='section'></div>", unsafe_allow_html=True)
 
 st.markdown("""
 Behind every spike is a life.  
-Behind every bar is a family.
+Behind every bar is a family
 """)
